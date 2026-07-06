@@ -213,4 +213,4 @@ Pass rule: `max(|a−b|) ≤ atol + rtol·max(|b|)` per tensor; report worst ele
 **Three-way validation, two environments:**
 1. **CI (Node, headless, every push):** CPU reference vs TransformerLens golden fixtures, key-for-key over §4's hook list, tight tolerance (atol 1e-4 — fp32 vs fp32, only op-order noise). This catches math bugs with zero GPU involvement.
 2. **Browser test page (manual, plus optional Puppeteer `--enable-unsafe-webgpu` job):** WGSL path vs CPU path on the same prompts, per-kernel then end-to-end, tolerances above. `validate.ts#validateAgainstGPU(hookPoint, atol)` loads both sides and diffs.
-3. **Intervention-level:** ablate head (l,h) in TransformerLens (golden) and in both local paths; final logits must agree within the logits tolerance. This is the test that validates the intervention path end-to-end.
+3. **Intervention-level:** ablate head (l,h) in TransformerLens (golden) and in both local paths; final logits must agree within the logits tolerance. This validates the intervention path end-to-end.
