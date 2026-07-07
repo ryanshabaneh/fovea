@@ -12,15 +12,15 @@ This document is the implementation contract. The TypeScript skeleton in `src/` 
 fovea/
 ├── ARCHITECTURE.md            ← this file
 ├── README.md
-├── LATER.md                   ← v2 ideas go here, not in the codebase
+├── LATER.md                   ← v2 ideas 
 ├── package.json
 ├── tsconfig.json
 ├── public/
 │   └── tokenizer/             ← vendored encoder.json + vocab.bpe (static assets)
 ├── scripts/
 │   ├── convert_weights.py     ← HF fp32 safetensors → fp16 shards + manifest.json
-│   └── export_golden.py       ← TransformerLens golden activations → fixtures/
-├── fixtures/                  ← golden tensors (gitignored; ~50 MB)
+│   └── export_golden.py       ← TransformerLens golden activations → fixtures/ (8 prompts for testing)
+├── fixtures/                  ← golden tensors (gitignored; ~50 MB) (8 prompts activations)
 ├── src/
 │   ├── engine/
 │   │   ├── config.ts          ← ModelConfig interface + GPT2_SMALL const
@@ -30,7 +30,7 @@ fovea/
 │   │   ├── kernels.ts         ← KernelRegistry: WGSL → compute pipelines
 │   │   ├── forward.ts         ← ForwardPass orchestrator (the spine)
 │   │   ├── hooks.ts           ← HookManager: read/write at named points
-│   │   ├── cache.ts           ← ActivationCache: GPU buffers + readbacks
+│   │   ├── cache.ts           ← ActivationCache: GPU buffers + readbacks (Get activations from gpu back to JS)
 │   │   └── interventions/
 │   │       ├── ablation.ts    ← HeadAblation
 │   │       ├── patch.ts       ← ActivationPatch
