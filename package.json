@@ -1,0 +1,16 @@
+{
+  "name": "fovea",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "npm run build && node dist/cpu/reference.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@webgpu/types": "^0.1.40",
+    "typescript": "^5.5.0"
+  }
+}

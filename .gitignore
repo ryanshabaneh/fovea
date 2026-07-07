@@ -3,3 +3,6 @@ dist/
 fixtures/
 dist-weights*/
 dumps/
+NOTES.md
+.DS_Store
+LATER.md
