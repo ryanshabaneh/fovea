@@ -10,6 +10,7 @@ interface Slot {
  * Decode one IEEE-754 half-float (given as a 16-bit int) to f32.
  * Handles subnormals, inf, and NaN. 
  */
+
 function halfToFloat(h: number): number {
   const sign = (h & 0x8000) >> 15;
   const exp = (h & 0x7c00) >> 10;
@@ -112,3 +113,7 @@ export class ActivationCache {
     this.slots.clear();
   }
 }
+
+
+
+
