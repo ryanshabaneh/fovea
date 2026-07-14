@@ -44,10 +44,13 @@ export class KernelRegistry {
     const key = `${name}:${this.hasF16 ? "f16" : "f32"}`;
     const cached = this.pipelines.get(key);
     if (cached) return cached;
-    const module = this.device.createShaderModule({ code: this.sourceFor(name), label: name });
+    const module = this.device.createShaderModule({
+      code: this.sourceFor(name), 
+      label: name 
+    });
     const pipeline = this.device.createComputePipeline({
       layout: "auto",
-      compute: { module, entryPoint: "main" },
+      compute: { module: module, entryPoint: "main" },
       label: key,
     });
     this.pipelines.set(key, pipeline);
