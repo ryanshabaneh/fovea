@@ -19,22 +19,19 @@ export class ForwardPass {
   readonly hooks: HookManager;
   readonly cache: ActivationCache;
 
-  // Persistent activation buffers, allocated once for n_ctx and reused.
-  // Shapes annotated for GPT-2 small (T = live sequence length ≤ 1024):
-  //   resid      f16 [T, 768]
-  //   normed     f16 [T, 768]      (LN output, reused for ln1/ln2/ln_final)
-  //   qkv        f16 [T, 2304]     (c_attn output, viewed as q|k|v)
-  //   scores     f16 [12, T, T]
-  //   pattern    f16 [12, T, T]
-  //   z          f16 [T, 12, 64]   (contiguous == [T, 768] view for W_O matmul)
-  //   attn_out   f16 [T, 768]
-  //   mlp_hidden f16 [T, 3072]
-  //   logits     f32 [T, 50257]
-  // TODO(impl): allocate in constructor via device.createBuffer (STORAGE |
-  //   COPY_SRC | COPY_DST so every buffer can be hooked/patched).
-  //   | complexity: low | blocking: none
+  // Persistent activation buffers, allocated once and reused every run.
+  private readonly resid: GPUBuffer;      // [T, 768]   the residual stream
+  private readonly normed: GPUBuffer;     // [T, 768]   layernorm output
+  private readonly qkv: GPUBuffer;        // [T, 2304]  c_attn output (Q|K|V)
+  private readonly scores: GPUBuffer;     // [12, T, T] attention scores
+  private readonly pattern: GPUBuffer;    // [12, T, T] post-softmax attention
+  private readonly z: GPUBuffer;          // [T, 768]   per-head attn output
+  private readonly attnOut: GPUBuffer;    // [T, 768]   after W_O
+  private readonly mlpHidden: GPUBuffer;  // [T, 3072]  MLP hidden
+  private readonly logits: GPUBuffer;     // [T, 50257] f32 output
 
   constructor(
+    //passed in from outside
     private device: GPUDevice,
     private cfg: ModelConfig,
     private weights: WeightStore,
@@ -43,6 +40,26 @@ export class ForwardPass {
   ) {
     this.cache = new ActivationCache(device);
     this.hooks = new HookManager(device, this.cache, cfg, kernels);
+    // Allocate each activation buffer once, sized for the max sequence (n_ctx),
+    // and reuse them every run. STORAGE = kernels read/write; COPY_SRC = can be
+    // hooked/read back; COPY_DST = can be patched.
+    const N = cfg.n_ctx, D = cfg.d_model, F = cfg.d_ff, H = cfg.n_heads, V = cfg.vocab_size;
+    const F16 = 2, F32 = 4; // bytes per element
+    const mk = (bytes: number) =>
+      device.createBuffer({
+        size: bytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      });
+
+    this.resid     = mk(N * D * F16);       // [N, 768]
+    this.normed    = mk(N * D * F16);       // [N, 768]
+    this.qkv       = mk(N * 3 * D * F16);   // [N, 2304]  (3×768)
+    this.scores    = mk(H * N * N * F16);   // [12, N, N]
+    this.pattern   = mk(H * N * N * F16);   // [12, N, N]
+    this.z         = mk(N * D * F16);       // [N, 768]
+    this.attnOut   = mk(N * D * F16);       // [N, 768]
+    this.mlpHidden = mk(N * F * F16);       // [N, 3072]
+    this.logits    = mk(N * V * F32);       // [N, 50257] f32
   }
 
   /**
@@ -84,19 +101,49 @@ export class ForwardPass {
   async run(tokens: Uint32Array, opts: RunOptions = {}): Promise<RunResult> {
     if (tokens.length > this.cfg.n_ctx)
       throw new Error(`Sequence length ${tokens.length} exceeds n_ctx ${this.cfg.n_ctx}`);
-    // TODO(impl): register opts.record / opts.writes on this.hooks; create
-    //   command encoder; encode the sequence above via kernels.encodeDispatch,
-    //   calling hooks.fire(encoder, name, buffer, runId) at each H point;
-    //   copy logits to MAP_READ staging; submit; await map; return.
-    //   This method is the heart of the project — see ARCHITECTURE.md §2.
-    //   | complexity: high | blocking: all 8 kernels, HookManager.fire,
-    //   KernelRegistry.encodeDispatch, WeightStore.uploadShard
-    void opts;
-    throw new Error("ForwardPass.run not implemented");
+
+    const T = tokens.length;
+    const runId = opts.runId ?? "default";
+
+    this.hooks.clear();
+
+    //build the maps in hooks
+    for (const hook of opts.record ?? []) this.hooks.registerRead(hook);
+    for (const write of opts.writes ?? []) this.hooks.registerWrite(write);
+
+    const encoder = this.device.createCommandEncoder({label: "forward"});
+
+    // Embed: token ids → resid = wte[id] + wpe[pos]
+    const idsBuf = this.device.createBuffer({
+      size: Math.ceil((T * 4) / 4) * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.device.queue.writeBuffer(idsBuf, 0, new Uint32Array(tokens));
+
+    const embedDims = this.makeUniform([T, this.cfg.d_model, this.cfg.vocab_size]);
+    this.kernels.encodeDispatch(
+      encoder,
+      "embed",
+      [embedDims, idsBuf, this.weights.getBuffer("wte.weight"), this.weights.getBuffer("wpe.weight"), this.resid],
+      [Math.ceil((T * this.cfg.d_model) / 256), 1, 1],
+    );
+    this.hooks.fire(encoder, "blocks.0.hook_resid_pre", this.resid, runId, T);
+
+    throw new Error("ForwardPass.run: embed done, rest to come. hopefully");
+  }
+
+  /** Create a small uniform buffer holding u32 dims (padded to 16 bytes). */
+  private makeUniform(values: number[]): GPUBuffer {
+    const buf = this.device.createBuffer({
+      size: Math.max(16, Math.ceil((values.length * 4) / 16) * 16),
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.device.queue.writeBuffer(buf, 0, new Uint32Array(values));
+    return buf;
   }
 
   /**
-   * Greedy decode helper for the UI. NO KV cache in v1 — full recompute per
+   * Greedy decode helper for the UI. full recompute per
    * token (ARCHITECTURE.md perf budget clears at 124M). Resist optimizing this
    * before the launch; it is fast enough and the recompute keeps hooks trivially
    * correct for every generated position.
@@ -107,6 +154,6 @@ export class ForwardPass {
     //   intentional (interventions must persist across generated tokens).
     //   | complexity: low | blocking: ForwardPass.run
     void prompt; void maxNewTokens; void opts;
-    throw new Error("ForwardPass.generate not implemented");
+    throw new Error("ForwardPass.generate not done");
   }
 }
