@@ -53,7 +53,7 @@ export class ActivationCache {
     const k = this.key(runId, hook);
     const existing = this.slots.get(k);
     if (existing && existing.byteLength === byteLength) return existing.buffer;
-    existing?.buffer.destroy(); //executes if existing is undefined
+    existing?.buffer.destroy(); // only runs if a stale slot exists (wrong size)
     const buffer = this.device.createBuffer({
       size: byteLength,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
