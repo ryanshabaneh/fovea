@@ -1,6 +1,7 @@
 export type KernelName =
   | "embed" | "layernorm" | "matmul_tiled" | "gelu"
-  | "softmax_causal" | "residual_add" | "head_zero" | "unembed";
+  | "softmax_causal" | "residual_add" | "head_zero" | "unembed"
+  | "attn_scores" | "attn_z";
 
 /**
  * KernelRegistry — loads .wgsl source, handles the f16 capability fallback,
@@ -21,6 +22,7 @@ export class KernelRegistry {
     const names: KernelName[] = [
       "embed", "layernorm", "matmul_tiled", "gelu",
       "softmax_causal", "residual_add", "head_zero", "unembed",
+      "attn_scores", "attn_z",
     ];
     await Promise.all(names.map(async (n) => {
       const src = await (await fetch(`${baseUrl}/${n}.wgsl`)).text();
