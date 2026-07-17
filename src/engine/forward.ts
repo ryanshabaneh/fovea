@@ -120,7 +120,7 @@ export class ForwardPass {
     });
     this.device.queue.writeBuffer(idsBuf, 0, new Uint32Array(tokens));
 
-    const embedDims = this.makeUniform([T, this.cfg.d_model, this.cfg.vocab_size]);
+    const embedDims = this.uniform([["u32", T], ["u32", this.cfg.d_model], ["u32", this.cfg.vocab_size]]);
     this.kernels.encodeDispatch(
       encoder,
       "embed",
@@ -129,16 +129,87 @@ export class ForwardPass {
     );
     this.hooks.fire(encoder, "blocks.0.hook_resid_pre", this.resid, runId, T);
 
-    throw new Error("ForwardPass.run: embed done, rest to come. hopefully");
+    const D = this.cfg.d_model;
+    const H = this.cfg.n_heads;
+    const Dh = this.cfg.d_head;
+    const attnScale = 1 / Math.sqrt(Dh); // 1/√64 = 0.125
+
+    for (let i = 0; i < this.cfg.n_layers; i++) {
+      const p = `blocks.${i}` as `blocks.${number}`;
+
+      // (a) ln1: normalize resid → normed
+      const ln1Dims = this.uniform([["u32", T], ["u32", D], ["f32", this.cfg.ln_eps]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "layernorm",
+        [ln1Dims, this.resid,
+         this.weights.getBuffer(`h.${i}.ln_1.weight`),
+         this.weights.getBuffer(`h.${i}.ln_1.bias`),
+         this.normed],
+        [T, 1, 1],
+      );
+      this.hooks.fire(encoder, `${p}.ln1.hook_normalized`, this.normed, runId, T);
+
+      // (b) W_qkv: normed → qkv = normed @ c_attn.weight + bias   (Q|K|V fused)
+      const qkvDims = this.uniform([["u32", T], ["u32", 3 * D], ["u32", D], ["u32", 1]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "matmul_tiled",
+        [qkvDims, this.normed,
+         this.weights.getBuffer(`h.${i}.attn.c_attn.weight`),
+         this.weights.getBuffer(`h.${i}.attn.c_attn.bias`),
+         this.qkv],
+        [Math.ceil((3 * D) / 16), Math.ceil(T / 16), 1],
+      );
+
+      // (c) attn scores: Q·Kᵀ · scale (all heads) → scores [H,T,T]
+      const scoresDims = this.uniform([["u32", T], ["u32", H], ["u32", Dh], ["f32", attnScale]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "attn_scores",
+        [scoresDims, this.qkv, this.scores],
+        [Math.ceil((H * T * T) / 256), 1, 1],
+      );
+      this.hooks.fire(encoder, `${p}.attn.hook_attn_scores`, this.scores, runId, T);
+
+      // (d) softmax over each row (causal). Scale already applied in (c), so pass 1.
+      const softDims = this.uniform([["u32", H], ["u32", T], ["f32", 1]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "softmax_causal",
+        [softDims, this.scores, this.pattern],
+        [H * T, 1, 1],
+      );
+      this.hooks.fire(encoder, `${p}.attn.hook_pattern`, this.pattern, runId, T);
+
+      // (e) attn_z: pattern·V (all heads) → z [T,768]   ← ablation fires here
+      const zDims = this.uniform([["u32", T], ["u32", H], ["u32", Dh]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "attn_z",
+        [zDims, this.qkv, this.pattern, this.z],
+        [Math.ceil((T * D) / 256), 1, 1],
+      );
+      this.hooks.fire(encoder, `${p}.attn.hook_z`, this.z, runId, T);
+    }
+
+    throw new Error("ForwardPass.run: qkv done, attention core next");
   }
 
-  /** Create a small uniform buffer holding u32 dims (padded to 16 bytes). */
-  private makeUniform(values: number[]): GPUBuffer {
+  /** Build a uniform buffer from mixed u32/f32 fields (padded to 16 bytes). */
+  private uniform(fields: Array<["u32" | "f32", number]>): GPUBuffer {
+    const size = Math.max(16, Math.ceil((fields.length * 4) / 16) * 16);
     const buf = this.device.createBuffer({
-      size: Math.max(16, Math.ceil((values.length * 4) / 16) * 16),
+      size,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.device.queue.writeBuffer(buf, 0, new Uint32Array(values));
+    const data = new ArrayBuffer(size);
+    const view = new DataView(data);
+    fields.forEach(([type, value], i) => {
+      if (type === "u32") view.setUint32(i * 4, value, true);
+      else view.setFloat32(i * 4, value, true);
+    });
+    this.device.queue.writeBuffer(buf, 0, data);
     return buf;
   }
 
