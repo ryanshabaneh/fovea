@@ -21,7 +21,8 @@ export class ForwardPass {
 
   // Persistent activation buffers, allocated once and reused every run.
   private readonly resid: GPUBuffer;      // [T, 768]   the residual stream
-  private readonly normed: GPUBuffer;     // [T, 768]   layernorm output
+  private readonly normed: GPUBuffer;     // [T, 768]   layernorm output (post-γβ)
+  private readonly normedPre: GPUBuffer;  // [T, 768]   layernorm pre-γβ (hook_normalized)
   private readonly qkv: GPUBuffer;        // [T, 2304]  c_attn output (Q|K|V)
   private readonly scores: GPUBuffer;     // [12, T, T] attention scores
   private readonly pattern: GPUBuffer;    // [12, T, T] post-softmax attention
@@ -54,6 +55,7 @@ export class ForwardPass {
 
     this.resid     = mk(N * D * F16);       // [N, 768]
     this.normed    = mk(N * D * F16);       // [N, 768]
+    this.normedPre = mk(N * D * F16);       // [N, 768]  pre-γβ (hook_normalized)
     this.qkv       = mk(N * 3 * D * F16);   // [N, 2304]  (3×768)
     this.scores    = mk(H * N * N * F16);   // [12, N, N]
     this.pattern   = mk(H * N * N * F16);   // [12, N, N]
@@ -148,10 +150,10 @@ export class ForwardPass {
         [ln1Dims, this.resid,
          this.weights.getBuffer(`h.${i}.ln_1.weight`),
          this.weights.getBuffer(`h.${i}.ln_1.bias`),
-         this.normed],
+         this.normed, this.normedPre],
         [T, 1, 1],
       );
-      this.hooks.fire(encoder, `${p}.ln1.hook_normalized`, this.normed, runId, T);
+      this.hooks.fire(encoder, `${p}.ln1.hook_normalized`, this.normedPre, runId, T);
 
       // (b) W_qkv: normed → qkv = normed @ c_attn.weight + bias   (Q|K|V fused)
       const qkvDims = this.uniform([["u32", T], ["u32", 3 * D], ["u32", D], ["u32", 1]]);
@@ -229,10 +231,10 @@ export class ForwardPass {
         [ln2Dims, this.resid,
          this.weights.getBuffer(`h.${i}.ln_2.weight`),
          this.weights.getBuffer(`h.${i}.ln_2.bias`),
-         this.normed],
+         this.normed, this.normedPre],
         [T, 1, 1],
       );
-      this.hooks.fire(encoder, `${p}.ln2.hook_normalized`, this.normed, runId, T);
+      this.hooks.fire(encoder, `${p}.ln2.hook_normalized`, this.normedPre, runId, T);
 
       // (i) MLP up: normed → mlp_hidden = normed @ c_fc.weight + bias   (768 → 3072)
       const fcDims = this.uniform([["u32", T], ["u32", F], ["u32", D], ["u32", 1]]);
@@ -292,10 +294,10 @@ export class ForwardPass {
       [lnfDims, this.resid,
        this.weights.getBuffer("ln_f.weight"),
        this.weights.getBuffer("ln_f.bias"),
-       this.normed],
+       this.normed, this.normedPre],
       [T, 1, 1],
     );
-    this.hooks.fire(encoder, "ln_final.hook_normalized", this.normed, runId, T);
+    this.hooks.fire(encoder, "ln_final.hook_normalized", this.normedPre, runId, T);
 
     // (4) unembed: normed @ wteᵀ → logits (f32, no bias — weight tying)
     const V = this.cfg.vocab_size;

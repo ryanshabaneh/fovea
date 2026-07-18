@@ -53,7 +53,7 @@ test("layerNorm: unit gamma/zero beta gives mean≈0, var≈1 per row", () => {
   const D = 32, rows = 4;
   const r = rng(7);
   const x = new Float32Array(rows * D).map(() => r() * 4 - 2);
-  const y = layerNorm(x, rows, D, new Float32Array(D).fill(1), new Float32Array(D), 1e-5);
+  const y = layerNorm(x, rows, D, new Float32Array(D).fill(1), new Float32Array(D), 1e-5).out;
   for (let row = 0; row < rows; row++) {
     let mean = 0;
     for (let j = 0; j < D; j++) mean += y[row * D + j];

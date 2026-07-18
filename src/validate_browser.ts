@@ -70,9 +70,12 @@ async function main(): Promise<void> {
   // p0 = "The Eiffel Tower is in the city of", with the leading BOS <|endoftext|>.
   const p0tokens = new Uint32Array([50256, 464, 412, 733, 417, 8765, 318, 287, 262, 1748, 286]);
 
-  // Hooks to compare (skip ln*.hook_normalized — GPU records post-γβ, golden pre-γβ).
+  // Hooks to compare. ln*.hook_normalized now record pre-γβ (TransformerLens
+  // convention) on both CPU and GPU, so they're included in the diff.
   const probes = [
     "blocks.0.hook_resid_pre",
+    "blocks.0.ln1.hook_normalized",
+    "blocks.0.ln2.hook_normalized",
     "blocks.0.attn.hook_attn_scores",
     "blocks.0.attn.hook_pattern",
     "blocks.0.attn.hook_z",

@@ -58,8 +58,13 @@ export interface CpuRunResult {
 export function layerNorm(
   x: Float32Array, rows: number, D: number,
   gamma: Float32Array, beta: Float32Array, eps: number,
-): Float32Array {
-  const y = new Float32Array(rows * D);
+): { out: Float32Array; normalized: Float32Array } {
+  // `normalized` = (x - mean) / std, BEFORE gamma/beta — this is what
+  // TransformerLens records at hook_normalized. `out` = normalized*gamma + beta,
+  // the value that feeds the next layer. Hooking the wrong one silently breaks
+  // golden validation on every ln*.hook_normalized (see LATER.md).
+  const out = new Float32Array(rows * D);
+  const normalized = new Float32Array(rows * D);
   for (let r = 0; r < rows; r++) {
     const base = r * D;
     let mean = 0;
@@ -72,10 +77,12 @@ export function layerNorm(
     }
     const rstd = 1 / Math.sqrt(varSum / D + eps);
     for (let j = 0; j < D; j++) {
-      y[base + j] = (x[base + j] - mean) * rstd * gamma[j] + beta[j];
+      const n = (x[base + j] - mean) * rstd;
+      normalized[base + j] = n;
+      out[base + j] = n * gamma[j] + beta[j];
     }
   }
-  return y;
+  return { out, normalized };
 }
 
 /** gelu.wgsl — gelu_new (tanh approximation). */
@@ -176,9 +183,10 @@ export function forward(
     const p = `blocks.${i}`;
     hook(`${p}.hook_resid_pre`, resid, [T, D]);
 
-    // a. LN1
-    let normed = layerNorm(resid, T, D, req(`h.${i}.ln_1.weight`), req(`h.${i}.ln_1.bias`), cfg.ln_eps);
-    hook(`${p}.ln1.hook_normalized`, normed, [T, D]);
+    // a. LN1  — hook the pre-γβ `normalized`, use post-γβ `out` for compute
+    const ln1 = layerNorm(resid, T, D, req(`h.${i}.ln_1.weight`), req(`h.${i}.ln_1.bias`), cfg.ln_eps);
+    hook(`${p}.ln1.hook_normalized`, ln1.normalized, [T, D]);
+    let normed = ln1.out;
 
     // b. QKV projection [T, 3D], split into [T, 12, 64] views
     const qkv = linear(normed, T, D, 3 * D, req(`h.${i}.attn.c_attn.weight`), req(`h.${i}.attn.c_attn.bias`));
@@ -250,9 +258,10 @@ export function forward(
     resid = residualAdd(resid, attnOut);
     hook(`${p}.hook_resid_mid`, resid, [T, D]);
 
-    // h. LN2
-    normed = layerNorm(resid, T, D, req(`h.${i}.ln_2.weight`), req(`h.${i}.ln_2.bias`), cfg.ln_eps);
-    hook(`${p}.ln2.hook_normalized`, normed, [T, D]);
+    // h. LN2  — hook pre-γβ, compute with post-γβ
+    const ln2 = layerNorm(resid, T, D, req(`h.${i}.ln_2.weight`), req(`h.${i}.ln_2.bias`), cfg.ln_eps);
+    hook(`${p}.ln2.hook_normalized`, ln2.normalized, [T, D]);
+    normed = ln2.out;
 
     // i–k. MLP
     const pre = linear(normed, T, D, F, req(`h.${i}.mlp.c_fc.weight`), req(`h.${i}.mlp.c_fc.bias`));
@@ -267,9 +276,10 @@ export function forward(
     hook(`${p}.hook_resid_post`, resid, [T, D]);
   }
 
-  // 3. Final LN
-  const normedF = layerNorm(resid, T, D, req("ln_f.weight"), req("ln_f.bias"), cfg.ln_eps);
-  hook("ln_final.hook_normalized", normedF, [T, D]);
+  // 3. Final LN  — hook pre-γβ, unembed the post-γβ output
+  const lnF = layerNorm(resid, T, D, req("ln_f.weight"), req("ln_f.bias"), cfg.ln_eps);
+  hook("ln_final.hook_normalized", lnF.normalized, [T, D]);
+  const normedF = lnF.out;
 
   // 4. Unembed: logits = normed @ wte^T, NO bias (weight tying). f32 stays f32.
   const logits = new Float32Array(T * V);

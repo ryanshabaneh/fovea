@@ -8,7 +8,8 @@ struct Dims { rows: u32, D: u32, eps: f32 }
 @group(0) @binding(1) var<storage, read> x: array<f16>;        // [rows, D]
 @group(0) @binding(2) var<storage, read> gamma: array<f16>;    // [D]
 @group(0) @binding(3) var<storage, read>  beta: array<f16>;    // [D]
-@group(0) @binding(4) var<storage, read_write> y: array<f16>;  // [rows, D] -> out
+@group(0) @binding(4) var<storage, read_write> y: array<f16>;  // [rows, D] -> out (post-γβ)
+@group(0) @binding(5) var<storage, read_write> normed: array<f16>; // [rows, D] pre-γβ (for hook_normalized, TransformerLens convention)
 
 const WG: u32 = 256u;
 var<workgroup> partial: array<f32, WG>;
@@ -67,9 +68,10 @@ fn main(@builtin(workgroup_id) wg_id: vec3<u32>,
   }
   workgroupBarrier(); // all threads need row_rstd before write pass
 
-  // Write: normalize, scale by gamma, shift by beta. One f16 round at store.
+  // Write: `normed` = pre-γβ normalized value (hook_normalized), `y` = scaled+shifted.
   for (var j = tid; j < dims.D; j = j + WG) {
     let norm = (f32(x[base + j]) - row_mean) * row_rstd;
+    normed[base + j] = f16(norm);
     y[base + j] = f16(norm * f32(gamma[j]) + f32(beta[j]));
   }
 }
