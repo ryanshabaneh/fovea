@@ -27,7 +27,8 @@ export class ForwardPass {
   private readonly pattern: GPUBuffer;    // [12, T, T] post-softmax attention
   private readonly z: GPUBuffer;          // [T, 768]   per-head attn output
   private readonly attnOut: GPUBuffer;    // [T, 768]   after W_O
-  private readonly mlpHidden: GPUBuffer;  // [T, 3072]  MLP hidden
+  private readonly mlpHidden: GPUBuffer;  // [T, 3072]  MLP hidden (pre-GELU)
+  private readonly mlpAct: GPUBuffer;     // [T, 3072]  MLP hidden (post-GELU)
   private readonly logits: GPUBuffer;     // [T, 50257] f32 output
 
   constructor(
@@ -44,7 +45,7 @@ export class ForwardPass {
     // and reuse them every run. STORAGE = kernels read/write; COPY_SRC = can be
     // hooked/read back; COPY_DST = can be patched.
     const N = cfg.n_ctx, D = cfg.d_model, F = cfg.d_ff, H = cfg.n_heads, V = cfg.vocab_size;
-    const F16 = 2, F32 = 4; // bytes per element
+    const F16 = 2, F32 = 4;// bytes per element
     const mk = (bytes: number) =>
       device.createBuffer({
         size: bytes,
@@ -58,7 +59,8 @@ export class ForwardPass {
     this.pattern   = mk(H * N * N * F16);   // [12, N, N]
     this.z         = mk(N * D * F16);       // [N, 768]
     this.attnOut   = mk(N * D * F16);       // [N, 768]
-    this.mlpHidden = mk(N * F * F16);       // [N, 3072]
+    this.mlpHidden = mk(N * F * F16);       // [N, 3072]  pre-GELU
+    this.mlpAct    = mk(N * F * F16);       // [N, 3072]  post-GELU
     this.logits    = mk(N * V * F32);       // [N, 50257] f32
   }
 
@@ -130,6 +132,7 @@ export class ForwardPass {
     this.hooks.fire(encoder, "blocks.0.hook_resid_pre", this.resid, runId, T);
 
     const D = this.cfg.d_model;
+    const F = this.cfg.d_ff;
     const H = this.cfg.n_heads;
     const Dh = this.cfg.d_head;
     const attnScale = 1 / Math.sqrt(Dh); // 1/√64 = 0.125
@@ -179,7 +182,7 @@ export class ForwardPass {
         "softmax_causal",
         [softDims, this.scores, this.pattern],
         [H * T, 1, 1],
-      );
+      ); //note: one workgroup per row
       this.hooks.fire(encoder, `${p}.attn.hook_pattern`, this.pattern, runId, T);
 
       // (e) attn_z: pattern·V (all heads) → z [T,768]   ← ablation fires here
@@ -191,9 +194,138 @@ export class ForwardPass {
         [Math.ceil((T * D) / 256), 1, 1],
       );
       this.hooks.fire(encoder, `${p}.attn.hook_z`, this.z, runId, T);
+
+      // (f) W_O: z → attn_out = z @ c_proj.weight + bias
+      const woDims = this.uniform([["u32", T], ["u32", D], ["u32", D], ["u32", 1]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "matmul_tiled",
+        [woDims, this.z,
+         this.weights.getBuffer(`h.${i}.attn.c_proj.weight`),
+         this.weights.getBuffer(`h.${i}.attn.c_proj.bias`),
+         this.attnOut],
+        [Math.ceil(D / 16), Math.ceil(T / 16), 1],
+      );
+      this.hooks.fire(encoder, `${p}.hook_attn_out`, this.attnOut, runId, T);
+
+      // (g) residual add: resid = resid + attn_out
+      // residual_add can't read + write the same buffer, so write the sum into
+      // the (now-free) normed buffer, then copy it back into resid.
+      const addDims = this.uniform([["u32", T * D]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "residual_add",
+        [addDims, this.resid, this.attnOut, this.normed],
+        [Math.ceil((T * D) / 256), 1, 1],
+      );
+      encoder.copyBufferToBuffer(this.normed, 0, this.resid, 0, T * D * 2);
+      this.hooks.fire(encoder, `${p}.hook_resid_mid`, this.resid, runId, T);
+
+      // (h) ln2: normalize resid → normed
+      const ln2Dims = this.uniform([["u32", T], ["u32", D], ["f32", this.cfg.ln_eps]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "layernorm",
+        [ln2Dims, this.resid,
+         this.weights.getBuffer(`h.${i}.ln_2.weight`),
+         this.weights.getBuffer(`h.${i}.ln_2.bias`),
+         this.normed],
+        [T, 1, 1],
+      );
+      this.hooks.fire(encoder, `${p}.ln2.hook_normalized`, this.normed, runId, T);
+
+      // (i) MLP up: normed → mlp_hidden = normed @ c_fc.weight + bias   (768 → 3072)
+      const fcDims = this.uniform([["u32", T], ["u32", F], ["u32", D], ["u32", 1]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "matmul_tiled",
+        [fcDims, this.normed,
+         this.weights.getBuffer(`h.${i}.mlp.c_fc.weight`),
+         this.weights.getBuffer(`h.${i}.mlp.c_fc.bias`),
+         this.mlpHidden],
+        [Math.ceil(F / 16), Math.ceil(T / 16), 1],
+      );
+      this.hooks.fire(encoder, `${p}.mlp.hook_pre`, this.mlpHidden, runId, T); //pre Gelu
+
+      // (j) GELU activation: mlp_hidden → mlp_act   (elementwise non-linearity)
+      const geluDims = this.uniform([["u32", T * F]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "gelu",
+        [geluDims, this.mlpHidden, this.mlpAct],
+        [Math.ceil((T * F) / 256), 1, 1],
+      );
+      this.hooks.fire(encoder, `${p}.mlp.hook_post`, this.mlpAct, runId, T); //post Gelu
+
+      // (k) MLP down: mlp_act → mlp_out = mlp_act @ c_proj.weight + bias   (3072 → 768)
+      // reuse the now-free attnOut buffer to hold mlp_out.
+      const mlpProjDims = this.uniform([["u32", T], ["u32", D], ["u32", F], ["u32", 1]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "matmul_tiled",
+        [mlpProjDims, this.mlpAct,
+         this.weights.getBuffer(`h.${i}.mlp.c_proj.weight`),
+         this.weights.getBuffer(`h.${i}.mlp.c_proj.bias`),
+         this.attnOut],
+        [Math.ceil(D / 16), Math.ceil(T / 16), 1],
+      );
+      this.hooks.fire(encoder, `${p}.hook_mlp_out`, this.attnOut, runId, T);
+
+      // (l) residual add: resid = resid + mlp_out   (finishes the block)
+      // same pattern as (g): add into the free normed buffer, then copy back.
+      const add2Dims = this.uniform([["u32", T * D]]);
+      this.kernels.encodeDispatch(
+        encoder,
+        "residual_add",
+        [add2Dims, this.resid, this.attnOut, this.normed],
+        [Math.ceil((T * D) / 256), 1, 1],
+      );
+      encoder.copyBufferToBuffer(this.normed, 0, this.resid, 0, T * D * 2);
+      this.hooks.fire(encoder, `${p}.hook_resid_post`, this.resid, runId, T);
     }
 
-    throw new Error("ForwardPass.run: qkv done, attention core next");
+     // (3) final layernorm: resid → normed
+    const lnfDims = this.uniform([["u32", T], ["u32", D], ["f32", this.cfg.ln_eps]]);
+    this.kernels.encodeDispatch(
+      encoder,
+      "layernorm",
+      [lnfDims, this.resid,
+       this.weights.getBuffer("ln_f.weight"),
+       this.weights.getBuffer("ln_f.bias"),
+       this.normed],
+      [T, 1, 1],
+    );
+    this.hooks.fire(encoder, "ln_final.hook_normalized", this.normed, runId, T);
+
+    // (4) unembed: normed @ wteᵀ → logits (f32, no bias — weight tying)
+    const V = this.cfg.vocab_size;
+    const unembedDims = this.uniform([["u32", T], ["u32", V], ["u32", D], ["u32", 0]]);
+    this.kernels.encodeDispatch(
+      encoder,
+      "unembed",
+      [unembedDims, this.normed, this.weights.getBuffer("wte.weight"), this.logits],
+      [Math.ceil(V / 16), Math.ceil(T / 16), 1],
+    );
+    
+
+
+    // (5) submit the whole recorded pass, then read the logits back to the CPU.
+    const logitBytes = T * V * 4; // f32 = 4 bytes
+    const staging = this.device.createBuffer({
+      size: logitBytes,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+    encoder.copyBufferToBuffer(this.logits, 0, staging, 0, logitBytes);
+
+    // Nothing has executed until here, this runs the entire forward pass.
+    this.device.queue.submit([encoder.finish()]);
+
+    await staging.mapAsync(GPUMapMode.READ);
+    const logits = new Float32Array(staging.getMappedRange().slice(0));
+    staging.unmap();
+    staging.destroy();
+
+    return { logits, seqLen: T, runId };
   }
 
   /** Build a uniform buffer from mixed u32/f32 fields (padded to 16 bytes). */
@@ -220,11 +352,23 @@ export class ForwardPass {
    * correct for every generated position.
    */
   async generate(prompt: string, maxNewTokens: number, opts: RunOptions = {}): Promise<string> {
-    // TODO(impl): encode prompt; loop { run; argmax over logits[T-1]; append;
-    //   stop on endoftext (50256) }; decode. Re-fires hooks every step — that is
-    //   intentional (interventions must persist across generated tokens).
-    //   | complexity: low | blocking: ForwardPass.run
-    void prompt; void maxNewTokens; void opts;
-    throw new Error("ForwardPass.generate not done");
+    const tokens = Array.from(this.tokenizer.encode(prompt)); // prompt → token ids
+    const V = this.cfg.vocab_size;
+
+    for (let step = 0; step < maxNewTokens; step++) {
+      const { logits, seqLen } = await this.run(new Uint32Array(tokens), opts);
+
+      // argmax over the LAST position's row → the predicted next token
+      const base = (seqLen - 1) * V; // start of the last row in the flat logits
+      let bestId = 0, bestVal = -Infinity;
+      for (let v = 0; v < V; v++) {
+        if (logits[base + v] > bestVal) { bestVal = logits[base + v]; bestId = v; }
+      }
+
+      if (bestId === GPT2Tokenizer.END_OF_TEXT) break; // 50256 = stop
+      tokens.push(bestId);
+    }
+
+    return this.tokenizer.decode(tokens);
   }
 }
