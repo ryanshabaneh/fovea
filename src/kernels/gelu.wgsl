@@ -17,5 +17,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (i >= dims.n) { return; }
   let v = f32(x[i]);
   let inner = SQRT_2_OVER_PI * (v + C * v * v * v);
-  out[i] = f16(0.5 * v * (1.0 + tanh(inner)));
+  // Clamp the tanh argument: GPU tanh builtins often compute exp(2x) internally,
+  // which overflows f32 for |x| > ~44 and returns NaN. tanh saturates to ±1 well
+  // before ±10, so this is exact at f16 precision but overflow-safe.
+  out[i] = f16(0.5 * v * (1.0 + tanh(clamp(inner, -10.0, 10.0))));
 }
