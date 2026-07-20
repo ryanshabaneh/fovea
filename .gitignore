@@ -1,8 +1,10 @@
 node_modules/
 dist/
+dist-app/
 fixtures/
 dist-weights*/
 dumps/
 NOTES.md
 .DS_Store
 LATER.md
+UI_HANDOFF.md
