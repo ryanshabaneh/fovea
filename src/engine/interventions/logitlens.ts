@@ -6,16 +6,7 @@ export interface LayerGuess {
   topTokens: { id: number; token: string; prob: number }[];
 }
 
-/**
- * LogitLens — "the model's running best guess": read hook_resid_post at every
- * layer, push each through ln_final + unembed, report top-k tokens per layer.
- *
- * Honesty note for the UI copy: the classic logit lens applies the FINAL
- * layernorm to intermediate residuals. That is the standard formulation
- * (nostalgebraist 2020) and what TransformerLens's accumulated_resid +
- * apply_ln_to_stack does — but it is an interpretive choice, not ground truth
- * about layer beliefs. Say so in the tooltip; reviewers notice.
- */
+
 export class LogitLens {
   constructor(private cfg: ModelConfig, readonly topK = 5) {}
 
@@ -28,13 +19,7 @@ export class LogitLens {
     return hooks;
   }
 
-  /**
-   * Compose per-layer guesses. v1 runs the (tiny) ln+unembed for the LAST
-   * position on the CPU from f32 readbacks: 13 × (768 LN + 768×50257 matvec)
-   * ≈ 0.5 GFLOP total — imperceptible, and it reuses the CPU reference ops,
-   * which means logit lens is correct the moment the readback path works.
-   * A GPU path is a LATER.md perf item, not a v1 need.
-   */
+  
   async compute(
     readback: (hook: HookName) => Promise<Float32Array>,
     decodeToken: (id: number) => string,
@@ -89,7 +74,6 @@ export class LogitLens {
     return guesses;
   }
 
-  /** Top-k over a logits row — implemented; shared by UI and tests. */
   static topK(logits: Float32Array, k: number): { id: number; logit: number }[] {
     const out: { id: number; logit: number }[] = [];
     for (let i = 0; i < logits.length; i++) {

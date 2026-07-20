@@ -1,12 +1,7 @@
 import type { HookName, HookWrite } from "../types.js";
 
-/**
- * HeadAblation 
- * zeroes z = blocks.{layer}.attn.hook_z[:, head, :], the head's 64-dim output
- * vector for every position, AFTER attention is computed and BEFORE the
- * shared W_O projection mixes heads. It does NOT zero the attention pattern;
- * a zeroed pattern row would still leak v-bias and renormalize differently.
- */
+/** Zeroes hook_z[:, head, :] - the head's output before W_O mixes heads
+ *  (not the attention pattern). */
 export class HeadAblation {
   constructor(
     readonly layer: number,
@@ -21,7 +16,6 @@ export class HeadAblation {
     return `blocks.${this.layer}.attn.hook_z` as HookName;
   }
 
-  /** Compile to a HookManager write op (head_zero.wgsl dispatch with this mask). */
   toHookWrite(nHeads = 12): HookWrite {
     if (this.mode === "mean") {
       throw new Error("mean ablation: means fixture not shipped yet");

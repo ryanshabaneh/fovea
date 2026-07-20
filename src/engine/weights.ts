@@ -20,7 +20,7 @@ export interface Manifest {
 }
 
 /**
- * WeightStore — manifest + shard fetch (with Cache API persistence) + GPU upload.
+ * WeightStore - manifest + shard fetch (with Cache API persistence) + GPU upload.
  *
  * IMPORTANT (see ARCHITECTURE.md §6): GPT-2's c_attn / c_proj /
  * c_fc weights are HF Conv1D, stored [d_in, d_out] and applied as y = x @ W + b.
@@ -32,7 +32,7 @@ export class WeightStore {
   private shapes = new Map<string, number[]>();
 
   // Private: building a usable store requires async downloading, and constructors
-  // can't be async — so creation goes through the static load() factory instead.
+  // can't be async - so creation goes through the static load() factory instead.
   private constructor(private device: GPUDevice) {}
 
   static async load(

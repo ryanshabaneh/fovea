@@ -69,7 +69,7 @@ test("layerNorm: unit gamma/zero beta gives mean≈0, var≈1 per row", () => {
 test("geluNew: matches tanh-approximation reference values", () => {
   const y = geluNew(new Float32Array([0, 1, -1, 5, -5]));
   approx(y[0], 0, 1e-9, "gelu(0)");
-  approx(y[1], 0.841192, 1e-4, "gelu(1)");   // tanh approx — NOT the erf value 0.841345 (they diverge at x=1)
+  approx(y[1], 0.841192, 1e-4, "gelu(1)");   // tanh approx - NOT the erf value 0.841345 (they diverge at x=1)
   approx(y[2], -0.158815, 1e-4, "gelu(-1)");
   approx(y[1] - y[2], 1, 1e-4, "gelu(1) - gelu(-1) = 1 (x·Φ(x) + x·Φ(-x) = x)");
   approx(y[3], 5, 1e-3, "gelu(5)≈5");
@@ -133,7 +133,7 @@ test("ablation semantics: all-ones mask is a no-op; zero mask changes logits", (
 
 test("patching semantics: full resid_pre overwrite at block 1 transplants run A's logits", () => {
   // Everything downstream of blocks.1.hook_resid_pre depends ONLY on that
-  // tensor — so patching all of it from run A must reproduce A's logits
+  // tensor - so patching all of it from run A must reproduce A's logits
   // exactly. This is the strongest cheap test of HookWrite ordering.
   const tokA = [1, 2, 3, 4], tokB = [9, 8, 7, 6]; // equal length (v1 constraint)
   const hook = "blocks.1.hook_resid_pre";

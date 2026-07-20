@@ -51,7 +51,7 @@ export class HookManager {
   fire(encoder: GPUCommandEncoder, hook: HookName, buffer: GPUBuffer, runId: string, seqLen: number): void {
     const read = this.reads.get(hook);
     const write = this.writes.get(hook);
-    if (!read && !write) return; // nothing registered here — fast exit
+    if (!read && !write) return; // nothing registered here - fast exit
 
     // Shape and byte size of this activation (f16 = 2 bytes per element).
     const shape = HookManager.hookShape(hook, this.cfg, seqLen);

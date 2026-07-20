@@ -1,7 +1,6 @@
-// attn_scores — scores[h,q,k] = (Q[q,h,:] · K[k,h,:]) * scale, all heads at once.
-// Reads Q and K straight from the fused qkv buffer [T, 3*D] using per-head
-// offsets, so no reshape or splitting is needed. Scale is applied HERE, which
-// means softmax_causal must be called with scale = 1 (no double-scaling).
+// attn_scores - scores[h,q,k] = (Q[q,h,:] · K[k,h,:]) * scale, all heads.
+// Reads Q/K from the fused qkv buffer by per-head offset (no reshape). Scale
+// applied here, so softmax_causal runs with scale = 1.
 enable f16;
 
 struct Dims { T: u32, H: u32, Dh: u32, scale: f32 }
@@ -17,20 +16,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let T = dims.T;
   let H = dims.H;
   let Dh = dims.Dh;
-  let n = H * T * T;
-  if (i >= n) { return; }
+  if (i >= H * T * T) { return; }
 
-  // Decode the flat index into (head, query, key).
   let h = i / (T * T);
   let rem = i % (T * T);
   let q = rem / T;
   let k = rem % T;
 
-  let D = H * Dh;      // 768
-  let QKV = 3u * D;    // 2304 = row stride in qkv
-  // Q starts at column 0 of each row; K starts at column D.
+  let D = H * Dh;
+  let QKV = 3u * D;                   // qkv row stride
   let qBase = q * QKV + h * Dh;       // Q[q, h, 0]
-  let kBase = k * QKV + D + h * Dh;   // K[k, h, 0]
+  let kBase = k * QKV + D + h * Dh;   // K[k, h, 0] (K starts at column D)
 
   var acc: f32 = 0.0;
   for (var d = 0u; d < Dh; d = d + 1u) {

@@ -25,6 +25,6 @@ export const GPT2_SMALL: ModelConfig = {
   ln_eps: 1e-5,
 };
 
-/** gelu_new constants — these values match scripts/export_golden.py and gelu.wgsl. */
+/** gelu_new constants - these values match scripts/export_golden.py and gelu.wgsl. */
 export const GELU_TANH_C = 0.044715;
 export const GELU_SQRT_2_OVER_PI = 0.7978845608028654;

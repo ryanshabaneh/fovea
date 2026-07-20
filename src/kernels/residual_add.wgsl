@@ -13,6 +13,6 @@ struct Dims {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= dims.n) { return; }
-  // add in f32, round once on store — matches CPU reference op order
+  // add in f32, round once on store - matches CPU reference op order
   out[i] = f16(f32(a[i]) + f32(b[i]));
 }

@@ -7,7 +7,7 @@ import { WeightStore } from "./weights.js";
 import { GPT2Tokenizer } from "./tokenizer.js";
 
 /**
- * ForwardPass — owns the activation buffers and encodes the full GPT-2
+ * ForwardPass - owns the activation buffers and encodes the full GPT-2
  * forward pass as one command submission, firing hooks between dispatches.
  *
  * The numbered sequence in run() is the implementation contract: kernel
@@ -96,10 +96,10 @@ export class ForwardPass {
    *       j. gelu(mlp_hidden) → mlp_hidden                   H(mlp.hook_post)
    *       k. matmul(mlp_hidden, c_proj.w [3072,768], +bias) → mlp_out  H(hook_mlp_out)
    *       l. residual_add(resid, mlp_out) → resid            H(hook_resid_post)
-   *          // resid now IS blocks.{i+1}.hook_resid_pre — fire that alias too,
+   *          // resid now IS blocks.{i+1}.hook_resid_pre - fire that alias too,
    *          // so registrations on either name work (TL treats them as equal values).
    *  3. layernorm(resid, ln_f.{g,b}) → normed                H("ln_final.hook_normalized")
-   *  4. unembed(normed, wte transposed-access) → logits (f32, no bias — weight tying)
+   *  4. unembed(normed, wte transposed-access) → logits (f32, no bias - weight tying)
    *  5. submit; map logits staging buffer; resolve recorded readbacks lazily.
    */
   async run(tokens: Uint32Array, opts: RunOptions = {}): Promise<RunResult> {
@@ -299,7 +299,7 @@ export class ForwardPass {
     );
     this.hooks.fire(encoder, "ln_final.hook_normalized", this.normedPre, runId, T);
 
-    // (4) unembed: normed @ wteᵀ → logits (f32, no bias — weight tying)
+    // (4) unembed: normed @ wteᵀ → logits (f32, no bias - weight tying)
     const V = this.cfg.vocab_size;
     const unembedDims = this.uniform([["u32", T], ["u32", V], ["u32", D], ["u32", 0]]);
     this.kernels.encodeDispatch(

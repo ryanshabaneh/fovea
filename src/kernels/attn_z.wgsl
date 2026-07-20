@@ -1,12 +1,12 @@
-// attn_z — z[q,h,d] = sum_k pattern[h,q,k] * V[k,h,d], all heads at once.
-// Reads V straight from the fused qkv buffer [T, 3*D] using per-head offsets.
-// Output z is [T, H, Dh] == [T, 768] contiguous, ready for the W_O matmul.
+// attn_z - z[q,h,d] = sum_k pattern[h,q,k] * V[k,h,d], all heads.
+// Reads V from the fused qkv buffer by per-head offset. Output [T, H, Dh] is
+// contiguous [T, 768], ready for the W_O matmul.
 enable f16;
 
 struct Dims { T: u32, H: u32, Dh: u32 }
 
 @group(0) @binding(0) var<uniform> dims: Dims;
-@group(0) @binding(1) var<storage, read> qkv: array<f16>;      // [T, 3*D]  (V portion)
+@group(0) @binding(1) var<storage, read> qkv: array<f16>;      // [T, 3*D] (V portion)
 @group(0) @binding(2) var<storage, read> pattern: array<f16>;  // [H, T, T]
 @group(0) @binding(3) var<storage, read_write> z: array<f16>;  // [T, H, Dh]
 
@@ -17,19 +17,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let T = dims.T;
   let H = dims.H;
   let Dh = dims.Dh;
-  let D = H * Dh;      // 768
-  let n = T * D;
-  if (i >= n) { return; }
+  let D = H * Dh;
+  if (i >= T * D) { return; }
 
-  // Decode the flat index into (query, head, dim).
   let q = i / D;
   let rem = i % D;
   let h = rem / Dh;
   let d = rem % Dh;
 
-  let QKV = 3u * D;                    // 2304 = row stride in qkv
-  let vHeadOff = 2u * D + h * Dh + d;  // V[·, h, d] within a row (V starts at column 2*D)
-  let patBase = (h * T + q) * T;       // pattern[h, q, 0]
+  let QKV = 3u * D;
+  let vHeadOff = 2u * D + h * Dh + d;  // V starts at column 2*D
+  let patBase = (h * T + q) * T;
 
   var acc: f32 = 0.0;
   for (var kk = 0u; kk < T; kk = kk + 1u) {

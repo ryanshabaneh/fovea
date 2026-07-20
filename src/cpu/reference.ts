@@ -1,5 +1,5 @@
 /**
- * CPU reference implementation — the ORACLE
+ * CPU reference implementation - the ORACLE
  *
  * Plain fp32 TypeScript, zero browser APIs, runs in Node. Fully implemented:
  * File's correctness is checked externally (CI diffs it against TransformerLens golden fixtures,
@@ -54,12 +54,12 @@ export interface CpuRunResult {
 
 // Per-op functions (1:1 with WGSL kernels)
 
-/** layernorm.wgsl — two-pass mean/variance, BIASED variance, eps inside sqrt. */
+/** layernorm.wgsl - two-pass mean/variance, BIASED variance, eps inside sqrt. */
 export function layerNorm(
   x: Float32Array, rows: number, D: number,
   gamma: Float32Array, beta: Float32Array, eps: number,
 ): { out: Float32Array; normalized: Float32Array } {
-  // `normalized` = (x - mean) / std, BEFORE gamma/beta — this is what
+  // `normalized` = (x - mean) / std, BEFORE gamma/beta - this is what
   // TransformerLens records at hook_normalized. `out` = normalized*gamma + beta,
   // the value that feeds the next layer. Hooking the wrong one silently breaks
   // golden validation on every ln*.hook_normalized (see LATER.md).
@@ -85,7 +85,7 @@ export function layerNorm(
   return { out, normalized };
 }
 
-/** gelu.wgsl — gelu_new (tanh approximation). */
+/** gelu.wgsl - gelu_new (tanh approximation). */
 export function geluNew(x: Float32Array): Float32Array {
   const y = new Float32Array(x.length);
   for (let i = 0; i < x.length; i++) {
@@ -96,7 +96,7 @@ export function geluNew(x: Float32Array): Float32Array {
   return y;
 }
 
-/** matmul_tiled.wgsl — y[T,Dout] = x[T,Din] @ W[Din,Dout] + b. HF orientation. 
+/** matmul_tiled.wgsl - y[T,Dout] = x[T,Din] @ W[Din,Dout] + b. HF orientation. 
  * Matmul fron [T, D_in] -> [T, D_out] by [T, D_in] * [D_in, D_out] learned matrix
 */
 export function linear(
@@ -121,7 +121,7 @@ export function residualAdd(a: Float32Array, b: Float32Array): Float32Array {
   return y;
 }
 
-/** head_zero.wgsl — z' = z * mask[head] over [T, H, Dh]. */
+/** head_zero.wgsl - z' = z * mask[head] over [T, H, Dh]. */
 export function headMask(
   z: Float32Array, T: number, H: number, Dh: number, mask: Float32Array,
 ): void {
@@ -183,7 +183,7 @@ export function forward(
     const p = `blocks.${i}`;
     hook(`${p}.hook_resid_pre`, resid, [T, D]);
 
-    // a. LN1  — hook the pre-γβ `normalized`, use post-γβ `out` for compute
+    // a. LN1  - hook the pre-γβ `normalized`, use post-γβ `out` for compute
     const ln1 = layerNorm(resid, T, D, req(`h.${i}.ln_1.weight`), req(`h.${i}.ln_1.bias`), cfg.ln_eps);
     hook(`${p}.ln1.hook_normalized`, ln1.normalized, [T, D]);
     let normed = ln1.out;
@@ -258,7 +258,7 @@ export function forward(
     resid = residualAdd(resid, attnOut);
     hook(`${p}.hook_resid_mid`, resid, [T, D]);
 
-    // h. LN2  — hook pre-γβ, compute with post-γβ
+    // h. LN2  - hook pre-γβ, compute with post-γβ
     const ln2 = layerNorm(resid, T, D, req(`h.${i}.ln_2.weight`), req(`h.${i}.ln_2.bias`), cfg.ln_eps);
     hook(`${p}.ln2.hook_normalized`, ln2.normalized, [T, D]);
     normed = ln2.out;
@@ -276,7 +276,7 @@ export function forward(
     hook(`${p}.hook_resid_post`, resid, [T, D]);
   }
 
-  // 3. Final LN  — hook pre-γβ, unembed the post-γβ output
+  // 3. Final LN  - hook pre-γβ, unembed the post-γβ output
   const lnF = layerNorm(resid, T, D, req("ln_f.weight"), req("ln_f.bias"), cfg.ln_eps);
   hook("ln_final.hook_normalized", lnF.normalized, [T, D]);
   const normedF = lnF.out;

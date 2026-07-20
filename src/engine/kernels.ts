@@ -4,7 +4,7 @@ export type KernelName =
   | "attn_scores" | "attn_z";
 
 /**
- * KernelRegistry — loads .wgsl source, handles the f16 capability fallback,
+ * KernelRegistry - loads .wgsl source, handles the f16 capability fallback,
  * and caches one GPUComputePipeline per (kernel, variant).
  */
 

@@ -4,10 +4,7 @@ import type { ActivationCache } from "../cache.js";
 import { HookManager } from "../hooks.js";
 import type { ModelConfig } from "../config.js";
 
-/**
- * ActivationPatch — run prompt B with hook H's activation substituted from a
- * recorded run of prompt A. This class only validates and compiles the write op.
- */
+/** Substitute a hook's activation from a recorded run into another run. */
 export class ActivationPatch {
   constructor(
     readonly sourceRunId: string,
@@ -17,10 +14,7 @@ export class ActivationPatch {
       throw new Error(`${hook} is not patchable in v1 (write set: ARCHITECTURE.md §4)`);
   }
 
-  /** 
-   * source and target sequence lengths must be equal, 
-   * otherwise the byte-for-byte buffer overwrite is positionally meaningless. 
-   */
+  /** Source and target seq lengths must match, it's a byte-for-byte overwrite. */
   toHookWrite(cache: ActivationCache, cfg: ModelConfig, targetSeqLen: number): HookWrite {
     const srcShape = cache.getShape(this.sourceRunId, this.hook);
     const expected = HookManager.hookShape(this.hook, cfg, targetSeqLen);

@@ -5,7 +5,7 @@
  *
  * Note: GPT-2 BPE operates on a reversible bytes→unicode remapping
  * ("bytes_to_unicode") so every byte is a printable character before merging.
- * Skipping it corrupts every token containing a space — leading-space tokens
+ * Skipping it corrupts every token containing a space - leading-space tokens
  * like "Ġthe" are most of the vocabulary.
  */
 

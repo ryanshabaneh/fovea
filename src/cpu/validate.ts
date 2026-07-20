@@ -8,9 +8,9 @@
  *   3. Browser:   WGSL path      vs golden fixtures (end-to-end atol 1e-2)
  *
  * Tensor-dump format (used by fixtures/ AND by browser GPU dumps):
- *   <dir>/index.json   — { prompts: [{id, text, tokens}],
+ *   <dir>/index.json   - { prompts: [{id, text, tokens}],
  *                          tensors: [{prompt, hook, shape, dtype:"f32", file}] }
- *   <dir>/<file>.bin   — raw little-endian f32, C-contiguous
+ *   <dir>/<file>.bin   - raw little-endian f32, C-contiguous
  * Golden tensors keep TL's leading batch dim of 1; comparison squeezes it.
  */
 
@@ -96,10 +96,10 @@ export function squeezeBatch(shape: number[]): number[] {
   return shape[0] === 1 ? shape.slice(1) : shape;
 }
 
-// validateAgainstGPU — the function the browser test page reports through.
+// validateAgainstGPU - the function the browser test page reports through.
 // The browser writes its readbacks using the same dump format into
 // dumps/gpu/<promptId>/, then this runs in Node (or the comparison runs
-// directly in-page using compareTensors — same code path either way).
+// directly in-page using compareTensors - same code path either way).
 
 export function validateAgainstGPU(
   hookPoint: string,

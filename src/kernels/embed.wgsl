@@ -1,7 +1,4 @@
-// embed — out[t,d] = wte[ids[t], d] + wpe[t, d]. 
-//note out[t,d] just means the d-th number inside the vector at token position t
-// Fuses token + positional embedding. One thread per
-// output element; T*768 elements.
+// embed - out[t,d] = wte[ids[t], d] + wpe[t, d]. Fused token + positional.
 enable f16;
 
 struct Dims { T: u32, D: u32, V: u32 }
@@ -15,11 +12,9 @@ struct Dims { T: u32, D: u32, V: u32 }
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
-  let n = dims.T * dims.D;
-  if (i >= n) { return; }
+  if (i >= dims.T * dims.D) { return; }
   let t = i / dims.D;
   let d = i % dims.D;
-  let id = min(ids[t], dims.V - 1u); // clamp: garbage id must not OOB-read
+  let id = min(ids[t], dims.V - 1u); // clamp so a bad id can't OOB-read
   out[i] = f16(f32(wte[id * dims.D + d]) + f32(wpe[t * dims.D + d]));
 }
-

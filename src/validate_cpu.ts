@@ -14,7 +14,7 @@ const report = validateCpuAgainstGolden(fixturesDir, GPT2_SMALL, weights, 1e-3);
 
 console.log(`\nCompared ${report.compared} tensors.`);
 if (report.failures.length === 0) {
-  console.log("All passed — CPU oracle matches TransformerLens.");
+  console.log("All passed - CPU oracle matches TransformerLens.");
   process.exitCode = 0;
 } else {
   console.error(`\n${report.failures.length} failure(s):`);

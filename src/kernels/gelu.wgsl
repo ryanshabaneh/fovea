@@ -1,4 +1,4 @@
-// gelu — gelu_new (tanh approximation), the variant GPT-2 was trained with.
+// gelu - gelu_new (tanh approximation), the variant GPT-2 was trained with.
 // reference; the erf variant diverges from golden tensors at ~1e-3.
 enable f16;
 
