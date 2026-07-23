@@ -1,4 +1,5 @@
 import "./styles.css";
+import { el } from "./dom.js";
 import { boot, type BootProgress } from "../engine/boot.js";
 import { createBootScreen } from "./components/bootscreen.js";
 import { createTopBar } from "./components/topbar.js";
@@ -205,7 +206,24 @@ function onProgress(p: BootProgress): void {
   }
 }
 
+/** Shown when the browser has no WebGPU  */
+function unsupportedScreen(): HTMLElement {
+  const shot = el("img", { class: "nogpu-shot", src: "/og.png", alt: "Fovea running GPT-2 in the browser" }) as HTMLImageElement;
+  shot.onerror = () => shot.remove();
+  return el("div", { class: "nogpu" }, [
+    el("div", { class: "nogpu-card" }, [
+      el("div", { class: "nogpu-mark" }, ["fovea"]),
+      el("p", { class: "nogpu-lead" }, ["Delete an attention head from GPT-2 and watch what it forgets."]),
+      shot,
+      el("p", { class: "nogpu-msg" }, ["Fovea runs GPT-2 on your GPU with WebGPU, which this browser doesn't support. Open it on a desktop in Chrome or Edge (114+)."]),
+      el("a", { class: "nogpu-gh", href: "https://github.com/ryanshabaneh/fovea", target: "_blank", rel: "noopener noreferrer" }, ["View source on GitHub →"]),
+    ]),
+  ]);
+}
+
 async function start(): Promise<void> {
+  if (!navigator.gpu) { app.replaceChildren(unsupportedScreen()); return; }
+
   const t0 = performance.now();
   app.replaceChildren(bootScreen.element);
   bootScreen.setStatus("initializing engine");
@@ -215,9 +233,8 @@ async function start(): Promise<void> {
     booted = await boot({ onProgress });
   } catch (e) {
     const msg = (e as Error).message;
-    let hint: string | undefined;
-    if (/fetch|network|load failed/i.test(msg)) hint = "content blocker or offline · try another browser profile";
-    else if (/webgpu|adapter/i.test(msg)) hint = "use Chrome/Edge 113+ with hardware acceleration on";
+    if (/webgpu|adapter/i.test(msg)) { app.replaceChildren(unsupportedScreen()); return; }
+    const hint = /fetch|network|load failed/i.test(msg) ? "content blocker or offline · try another browser profile" : undefined;
     bootScreen.fail("boot failed · signal lost", hint);
     return;
   }

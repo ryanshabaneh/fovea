@@ -389,6 +389,16 @@ body {
 .attn-peak { font-family: var(--sans); font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .attn-peak b { font-family: var(--mono); color: var(--accent); font-weight: 500; white-space: pre; }
 
+/* Unsupported-browser fallback (no WebGPU: most phones, Firefox, Safari) */
+.nogpu { flex: 1; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 32px 20px; background: var(--bg); }
+.nogpu-card { width: min(460px, 100%); display: flex; flex-direction: column; align-items: center; text-align: center; gap: 15px; }
+.nogpu-mark { font-family: var(--sans); font-weight: 300; font-size: 40px; letter-spacing: 0.02em; color: var(--text); }
+.nogpu-lead { font-family: var(--sans); font-size: 15px; color: var(--text-dim); margin: 0; max-width: 32ch; line-height: 1.5; }
+.nogpu-shot { width: 100%; border-radius: var(--r); border: 1px solid var(--border); }
+.nogpu-msg { font-family: var(--sans); font-size: 13.5px; color: var(--text-faint); margin: 2px 0 0; max-width: 40ch; line-height: 1.6; }
+.nogpu-gh { font-family: var(--mono); font-size: 13px; color: var(--accent); text-decoration: none; margin-top: 2px; }
+.nogpu-gh:hover { text-decoration: underline; }
+
 /* Responsive */
 @media (max-width: 900px) {
   .hm-main { grid-template-columns: 1fr; }
