@@ -5,6 +5,11 @@ import { fmtProb, display } from "../format.js";
 const LAYERS = 12;
 const HEADS = 12;
 
+export interface HeadAttention {
+  /** Context tokens with the selected head's last-token attention weight [0..1]. */
+  tokens: { text: string; weight: number }[];
+}
+
 export interface HeadDetail {
   layer: number;
   head: number;
@@ -13,6 +18,7 @@ export interface HeadDetail {
   cleanTop: string;
   ablatedTop: string;
   shifts: { token: string; from: number; to: number }[];
+  attention?: HeadAttention | null;
 }
 
 export interface HeatmapScene {
@@ -29,6 +35,29 @@ export interface HeatmapScene {
 
 const axis = (cls: string): HTMLElement =>
   el("div", { class: cls }, Array.from({ length: 12 }, (_, i) => el("span", {}, [String(i)])));
+
+/** The selected head's last-token attention, painted onto the context tokens.
+ *  Weights are normalized to the row's peak and gamma-lifted so that secondary
+ *  attention stays visible on the dark colormap. */
+function attentionSection(tokens: { text: string; weight: number }[]): HTMLElement {
+  let peak = 0, peakIdx = 0;
+  tokens.forEach((t, i) => { if (t.weight > peak) { peak = t.weight; peakIdx = i; } });
+  const denom = peak || 1;
+
+  const chips = tokens.map((t) => {
+    const g = Math.pow(Math.min(1, t.weight / denom), 0.6);
+    const chip = el("span", { class: "attn-tok", title: `${(t.weight * 100).toFixed(1)}%` }, [t.text]);
+    chip.style.background = inferno(g);
+    chip.style.color = g > 0.52 ? "#0d0d0f" : "var(--text-dim)";
+    return chip;
+  });
+
+  return el("div", { class: "attn-sec" }, [
+    el("div", { class: "hm-d-eyebrow" }, ["attends to"]),
+    el("div", { class: "attn-strip" }, chips),
+    el("div", { class: "attn-peak" }, ["max ", el("b", {}, [tokens[peakIdx].text]), ` · ${(peak * 100).toFixed(0)}%`]),
+  ]);
+}
 
 /** Attention-head ablation importance, ΔKL from the clean prediction. */
 export function createHeatmapScene(): HeatmapScene {
@@ -50,7 +79,7 @@ export function createHeatmapScene(): HeatmapScene {
     el("div", { class: "hm-wrap" }, [
       el("div", { class: "hm-head" }, [
         el("h1", { class: "hm-title" }, ["Attention-head ablation"]),
-        el("div", { class: "hm-note" }, ["Color = how much zeroing that head shifts the next-token distribution (KL divergence). Brighter = the head matters more."]),
+        el("div", { class: "hm-note" }, ["Each cell is an attention head, colored by the KL divergence between the next-token distribution with that head intact versus ablated. Brighter heads exert more influence on the prediction."]),
       ]),
       el("div", { class: "hm-main" }, [
         el("div", { class: "hm-spacer" }),
@@ -125,13 +154,18 @@ export function createHeatmapScene(): HeatmapScene {
         el("span", {}, ["ablated"]),
       ]);
 
-      replace(detail,
+      const nodes: (Node | string)[] = [
         el("div", { class: "hm-d-head" }, [`Layer ${d.layer} · Head ${d.head}`]),
         el("div", { class: "hm-d-kl" }, [`Δ KL ${d.kl.toFixed(3)} · `, el("span", { class: `hm-d-imp imp-${d.importance}` }, [d.importance])]),
+      ];
+      if (d.attention && d.attention.tokens.length) nodes.push(attentionSection(d.attention.tokens));
+      nodes.push(
+        el("div", { class: "hm-d-eyebrow" }, ["if ablated"]),
         el("div", { class: "hm-d-pred" }, predChildren),
         shiftHead,
         el("div", { class: "hm-d-shifts" }, shifts),
       );
+      replace(detail, ...nodes);
     },
   };
 }

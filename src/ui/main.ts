@@ -5,7 +5,7 @@ import { createTopBar } from "./components/topbar.js";
 import { createConsoleScene, type DistTok } from "./scenes/console.js";
 import { createHeatmapScene } from "./scenes/heatmap.js";
 import { HeadAblation } from "../engine/interventions/ablation.js";
-import { softmaxStats, softmaxProbs, klDiv, topK, prob, argmax } from "./format.js";
+import { softmaxStats, softmaxProbs, klDiv, topK, prob, argmax, display } from "./format.js";
 import { GPT2_SMALL } from "../engine/config.js";
 
 const app = document.getElementById("app")!;
@@ -65,9 +65,26 @@ function refreshTokens(): void {
   con.setTokens(Array.from(encodeInput()).map((id) => ({ id, text: decode(id) })));
 }
 
-async function ablate(layer: number, headIdx: number): Promise<Float32Array> {
-  const { logits, seqLen } = await fwd!.run(baseline!.tokens, { writes: [new HeadAblation(layer, headIdx).toHookWrite()] });
-  return logits.slice((seqLen - 1) * V, seqLen * V);
+interface AblateResult {
+  /** Last-position logit row [vocab]. */
+  last: Float32Array;
+  /** Ablated head's last-token attention over the context [T], or null. */
+  attn: Float32Array | null;
+}
+
+async function ablate(layer: number, headIdx: number, withPattern = false): Promise<AblateResult> {
+  const patternHook = `blocks.${layer}.attn.hook_pattern` as `blocks.${number}.attn.hook_pattern`;
+  const { logits, seqLen, runId } = await fwd!.run(baseline!.tokens, {
+    writes: [new HeadAblation(layer, headIdx).toHookWrite()],
+    record: withPattern ? [patternHook] : undefined,
+  });
+  const last = logits.slice((seqLen - 1) * V, seqLen * V);
+  if (!withPattern) return { last, attn: null };
+  // pattern is [H, T, T]; ablation zeroes hook_z (later), so this is the head's
+  // true pattern. Slice the last token's row: how the prediction position looks back.
+  const pat = await fwd!.cache.readback(runId, patternHook);
+  const base = headIdx * seqLen * seqLen + (seqLen - 1) * seqLen;
+  return { last, attn: pat.slice(base, base + seqLen) };
 }
 
 async function runBaseline(): Promise<void> {
@@ -104,7 +121,7 @@ function backToConsole(): void { show(con.element); topbar.setNav(null); }
 async function enterHeatmap(): Promise<void> {
   show(heatmap.element);
   topbar.setNav("console", backToConsole);
-  if (sweep) { paintSweep(); heatmap.setCaption(`peak Δ KL ${sweepMax.toFixed(3)}`); return; }
+  if (sweep) { paintSweep(); heatmap.setCaption(`max Δ KL ${sweepMax.toFixed(3)}`); return; }
   if (busy || !baseline) return;
   busy = true;
   topbar.setBusy(true);
@@ -115,7 +132,7 @@ async function enterHeatmap(): Promise<void> {
     let max = 1e-9;
     for (let l = 0; l < L; l++) {
       for (let h = 0; h < H; h++) {
-        const kl = klDiv(b.probs, softmaxProbs(await ablate(l, h)));
+        const kl = klDiv(b.probs, softmaxProbs((await ablate(l, h)).last));
         kls[l * H + h] = kl;
         max = Math.max(max, kl);
         heatmap.setCell(l, h, Math.min(1, kl / max));
@@ -124,7 +141,7 @@ async function enterHeatmap(): Promise<void> {
     }
     sweep = kls; sweepMax = max;
     paintSweep();
-    heatmap.setCaption(`peak Δ KL ${sweepMax.toFixed(3)}`);
+    heatmap.setCaption(`max Δ KL ${sweepMax.toFixed(3)}`);
   } finally {
     busy = false;
     topbar.setBusy(false);
@@ -138,7 +155,7 @@ async function investigateHead(layer: number, headIdx: number): Promise<void> {
   topbar.setBusy(true);
   try {
     const b = baseline;
-    const row = await ablate(layer, headIdx);
+    const { last: row, attn } = await ablate(layer, headIdx, true);
     const abProbs = softmaxProbs(row);
     const kl = klDiv(b.probs, abProbs);
     const abTopId = argmax(row);
@@ -150,10 +167,15 @@ async function investigateHead(layer: number, headIdx: number): Promise<void> {
       shifts.push({ token: decode(abTopId), from: b.probs[abTopId], to: abProbs[abTopId] });
     }
 
+    // Where this head looks: its last-token attention over the context.
+    const attention = attn
+      ? { tokens: Array.from(b.tokens, (id, p) => ({ text: id === BOS_ID ? "⟨bos⟩" : display(decode(id)), weight: attn[p] })) }
+      : null;
+
     heatmap.setSelected(layer, headIdx);
     heatmap.setDetail({
       layer, head: headIdx, kl, importance: importanceOf(kl),
-      cleanTop: b.top[0].token, ablatedTop: decode(abTopId), shifts,
+      cleanTop: b.top[0].token, ablatedTop: decode(abTopId), shifts, attention,
     });
     explored.add(layer * H + headIdx);
     heatmap.markExplored(layer, headIdx);
