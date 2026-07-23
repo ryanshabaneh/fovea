@@ -37,12 +37,12 @@ npm run dev
 npm test          # checks the GPU math against the CPU reference
 ```
 
-**Requirements:** a browser with WebGPU — desktop Chrome or Edge (114+). Safari, Firefox, and phones aren't there yet.
+**Requirements:** a browser with WebGPU, desktop Chrome or Edge 
 
 ## Project layout
 
 ```
-src/engine/    WebGPU engine — weights, kernels, forward pass, hooks
+src/engine/    WebGPU engine: weights, kernels, forward pass, hooks
 src/kernels/   the WGSL GPU kernels
 src/cpu/       the CPU reference model everything is checked against
 src/ui/        the interface
