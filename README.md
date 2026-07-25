@@ -6,6 +6,8 @@
 
 [**▶ Live demo**](https://fovea-gpt2.vercel.app/) · desktop Chrome or Edge
 
+<img src="docs/demo.gif" alt="Fovea: switching off an attention head and viewing its attention pattern" width="820">
+
 </div>
 
 ---
