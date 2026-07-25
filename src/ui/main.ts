@@ -215,14 +215,17 @@ function unsupportedScreen(): HTMLElement {
       el("div", { class: "nogpu-mark" }, ["fovea"]),
       el("p", { class: "nogpu-lead" }, ["Delete an attention head from GPT-2 and watch what it forgets."]),
       shot,
-      el("p", { class: "nogpu-msg" }, ["Fovea runs GPT-2 on your GPU with WebGPU, which this browser doesn't support. Open it on a desktop in Chrome or Edge (114+)."]),
+      el("p", { class: "nogpu-msg" }, ["Fovea downloads GPT-2 and runs it locally on your GPU, so it needs a desktop browser (Chrome or Edge). Open it on a computer to try the live tool."]),
       el("a", { class: "nogpu-gh", href: "https://github.com/ryanshabaneh/fovea", target: "_blank", rel: "noopener noreferrer" }, ["View source on GitHub →"]),
     ]),
   ]);
 }
 
 async function start(): Promise<void> {
-  if (!navigator.gpu) { app.replaceChildren(unsupportedScreen()); return; }
+  // Phones/tablets often expose navigator.gpu but can't realistically download a
+  // 248 MB model and run GPT-2, so gate on a fine pointer (desktop) too.
+  const isDesktop = matchMedia("(pointer: fine)").matches;
+  if (!navigator.gpu || !isDesktop) { app.replaceChildren(unsupportedScreen()); return; }
 
   const t0 = performance.now();
   app.replaceChildren(bootScreen.element);
