@@ -215,7 +215,7 @@ function unsupportedScreen(): HTMLElement {
       el("div", { class: "nogpu-mark" }, ["fovea"]),
       el("p", { class: "nogpu-lead" }, ["Delete an attention head from GPT-2 and watch what it forgets."]),
       shot,
-      el("p", { class: "nogpu-msg" }, ["Fovea downloads GPT-2 and runs it locally on your GPU, so it needs a desktop browser (Chrome or Edge). Open it on a computer to try the live tool."]),
+      el("p", { class: "nogpu-msg" }, ["Fovea downloads GPT-2's weights (~250 MB) and runs the model on your GPU, so it needs a desktop browser (Chrome or Edge). Open it on a computer to try the live tool."]),
       el("a", { class: "nogpu-gh", href: "https://github.com/ryanshabaneh/fovea", target: "_blank", rel: "noopener noreferrer" }, ["View source on GitHub →"]),
     ]),
   ]);
