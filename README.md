@@ -22,7 +22,7 @@ It's a small tool for *mechanistic interpretability*, figuring out what individu
 
 ## How it works
 
-Fovea runs GPT-2 small (124M parameters) entirely on the GPU. The complete forward pass — embeddings, multi-head self-attention, MLPs, and layer normalization — is implemented from scratch as **WGSL compute shaders**, with activations stored in fp16 and accumulated in fp32 to stay numerically faithful across long reductions.
+Fovea runs GPT-2 small (124M parameters) entirely on the GPU. The complete forward pass is implemented from scratch as **WGSL compute shaders**, with activations stored in fp16 and accumulated in fp32 to stay numerically faithful across long reductions.
 
 - **Nothing runs on a server.** The model's fp16 weights (~248 MB) stream directly from Hugging Face into GPU memory and are cached locally for instant repeat visits. All inference happens client-side; no data leaves your browser.
 - **Verification.** Each GPU kernel is validated against a readable fp32 CPU implementation of GPT-2, and end-to-end against activations exported from [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens), agreeing to within a documented per-kernel tolerance. The CPU model is the oracle; the WGSL path must match it op for op.
