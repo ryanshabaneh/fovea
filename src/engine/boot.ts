@@ -27,12 +27,15 @@ export interface BootOptions {
   /** Where the engine fetches encoder.json / vocab.bpe. Default "/tokenizer". */
   tokenizerPath?: string;
   onProgress?: (p: BootProgress) => void;
+  /** Extra device features to request when the adapter has them (e.g. "timestamp-query"). */
+  features?: GPUFeatureName[];
 }
 
 export interface BootResult {
   device: GPUDevice;
   cfg: ModelConfig;
   fwd: ForwardPass;
+  kernels: KernelRegistry;
   tokenizer: GPT2Tokenizer;
   hasF16: boolean;
 }
@@ -59,8 +62,10 @@ export async function boot(opts: BootOptions = {}): Promise<BootResult> {
   // The logits buffer is ~196 MB (n_ctx × 50257 × f32), above the default
   // 128 MB storage-binding limit. Without these raised limits the entire
   // forward pass silently fails and produces all zeros (no exception thrown).
+  const features = (hasF16 ? (["shader-f16"] as GPUFeatureName[]) : [])
+    .concat((opts.features ?? []).filter((f) => adapter.features.has(f)));
   const device = await adapter.requestDevice({
-    requiredFeatures: hasF16 ? (["shader-f16"] as GPUFeatureName[]) : [],
+    requiredFeatures: features,
     requiredLimits: {
       maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
       maxBufferSize: adapter.limits.maxBufferSize,
@@ -88,5 +93,5 @@ export async function boot(opts: BootOptions = {}): Promise<BootResult> {
 
   const fwd = new ForwardPass(device, GPT2_SMALL, weights, kernels, tokenizer);
   report({ stage: "ready", note: "engine ready" });
-  return { device, cfg: GPT2_SMALL, fwd, tokenizer, hasF16 };
+  return { device, cfg: GPT2_SMALL, fwd, kernels, tokenizer, hasF16 };
 }
