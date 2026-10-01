@@ -2,7 +2,7 @@ import type { ModelConfig } from "./config.js";
 import type { HookName, HookWrite, TensorMeta } from "./types.js";
 import { isWritableHook } from "./types.js";
 import type { ActivationCache } from "./cache.js";
-import type { KernelRegistry } from "./kernels.js";
+import type { KernelRegistry, PassRecorder } from "./kernels.js";
 
 /**
  * ForwardPass calls fire() between kernel dispatches with the live GPUBuffer
@@ -17,6 +17,10 @@ import type { KernelRegistry } from "./kernels.js";
 export class HookManager {
   private reads = new Map<HookName, { preWrite: boolean }>();
   private writes = new Map<HookName, HookWrite>();
+  // Ablation scratch, reused across runs: one mask buffer per hook (several
+  // layers may be ablated in one run) and a shared head_zero output.
+  private masks = new Map<HookName, GPUBuffer>();
+  private maskTmp: GPUBuffer | null = null;
 
   constructor(
     private device: GPUDevice,
@@ -43,12 +47,12 @@ export class HookManager {
 
   /**
    * Called by ForwardPass at each hook point, inside command encoding.
-   * @param encoder  the active command encoder (copies/dispatches are encoded, not submitted)
+   * @param rec      the active pass recorder (copies/dispatches are encoded, not submitted)
    * @param hook     hook name being fired
    * @param buffer   live GPU buffer holding this activation (f16)
    * @param runId    cache key for reads
    */
-  fire(encoder: GPUCommandEncoder, hook: HookName, buffer: GPUBuffer, runId: string, seqLen: number): void {
+  fire(rec: PassRecorder, hook: HookName, buffer: GPUBuffer, runId: string, seqLen: number): void {
     const read = this.reads.get(hook);
     const write = this.writes.get(hook);
     if (!read && !write) return; // nothing registered here - fast exit
@@ -60,7 +64,7 @@ export class HookManager {
     // Records a copy of the live buffer into the cache slot for this run+hook.
     const recordRead = () => {
       const slot = this.cache.ensureSlot(runId, hook, byteLength, shape);
-      encoder.copyBufferToBuffer(buffer, 0, slot, 0, byteLength);
+      rec.copy(buffer, 0, slot, 0, byteLength);
     };
 
     // (1) pre-write read → captures the CLEAN value, before any edit.
@@ -70,10 +74,10 @@ export class HookManager {
     if (write) {
       if (write.op.kind === "copy_from") {
         // patching: overwrite this activation with another run's cached buffer
-        encoder.copyBufferToBuffer(write.op.src, 0, buffer, 0, write.op.bytes);
+        rec.copy(write.op.src, 0, buffer, 0, write.op.bytes);
       } else {
         // ablation: scale each head by mask via the head_zero kernel
-        this.encodeHeadMask(encoder, buffer, write.op.mask, seqLen);
+        this.encodeHeadMask(rec, hook, buffer, write.op.mask, seqLen);
       }
     }
 
@@ -87,7 +91,8 @@ export class HookManager {
    * into a temp buffer and copy back, leaving the ablated result in `buffer`.
    */
   private encodeHeadMask(
-    encoder: GPUCommandEncoder,
+    rec: PassRecorder,
+    hook: HookName,
     buffer: GPUBuffer,
     mask: Float32Array,
     seqLen: number,
@@ -96,33 +101,30 @@ export class HookManager {
     const n = T * H * Dh;
     const byteLength = n * 2; // f16
 
-    // Dims uniform {T, H, Dh}. Uniform structs round up to 16 bytes.
-    const dims = this.device.createBuffer({
-      size: 16,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.device.queue.writeBuffer(dims, 0, new Uint32Array([T, H, Dh]));
+    const dims = this.kernels.uniform([["u32", T], ["u32", H], ["u32", Dh]]);
 
-    // Per-head mask, f32 [H].
-    const maskBuf = this.device.createBuffer({
-      size: Math.ceil((H * 4) / 4) * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
+    // Per-head mask, f32 [H]. Rewritten each run; queue order puts the write
+    // before this run's submit.
+    let maskBuf = this.masks.get(hook);
+    if (!maskBuf) {
+      maskBuf = this.device.createBuffer({ size: H * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      this.masks.set(hook, maskBuf);
+    }
     this.device.queue.writeBuffer(maskBuf, 0, new Float32Array(mask));
 
     // head_zero writes to a separate output; use a temp then copy back into buffer.
-    const tmp = this.device.createBuffer({
-      size: byteLength,
+    this.maskTmp ??= this.device.createBuffer({
+      size: this.cfg.n_ctx * H * Dh * 2,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
 
     this.kernels.encodeDispatch(
-      encoder,
+      rec,
       "head_zero",
-      [dims, buffer, maskBuf, tmp],
+      [dims, buffer, maskBuf, this.maskTmp],
       [Math.ceil(n / 256), 1, 1],
     );
-    encoder.copyBufferToBuffer(tmp, 0, buffer, 0, byteLength);
+    rec.copy(this.maskTmp, 0, buffer, 0, byteLength);
   }
 
   /**
